@@ -1,9 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowLeft, Save, Eye, Upload, Image as ImageIcon } from "lucide-react";
+import {
+  ArrowLeft,
+  Save,
+  Eye,
+  Upload,
+  Image as ImageIcon,
+  Clock,
+  AlertCircle,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import MDEditor from "@uiw/react-md-editor";
@@ -19,9 +27,100 @@ export default function WritePage() {
   const [isUploading, setIsUploading] = useState(false);
   const [imageUrl, setImageUrl] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [showRestoreDialog, setShowRestoreDialog] = useState(false);
 
   // 개발 환경 체크
   const isDevelopment = process.env.NODE_ENV === "development";
+
+  // 로컬스토리지 키
+  const DRAFT_KEY = "blog-post-draft";
+
+  // 임시저장 데이터 저장
+  const saveDraft = () => {
+    const draftData = {
+      title,
+      content,
+      category,
+      imageUrl,
+      savedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(draftData));
+    setLastSaved(new Date());
+    setHasUnsavedChanges(false);
+  };
+
+  // 임시저장 데이터 불러오기
+  const loadDraft = () => {
+    const savedDraft = localStorage.getItem(DRAFT_KEY);
+    if (savedDraft) {
+      try {
+        const draftData = JSON.parse(savedDraft);
+        setTitle(draftData.title || "");
+        setContent(draftData.content || "");
+        setCategory(draftData.category || "");
+        setImageUrl(draftData.imageUrl || "");
+        if (draftData.savedAt) {
+          setLastSaved(new Date(draftData.savedAt));
+        }
+        setHasUnsavedChanges(false);
+      } catch (error) {
+        console.error("임시저장 데이터 로드 실패:", error);
+        localStorage.removeItem(DRAFT_KEY);
+      }
+    }
+  };
+
+  // 임시저장 데이터 삭제
+  const clearDraft = () => {
+    localStorage.removeItem(DRAFT_KEY);
+    setLastSaved(null);
+    setHasUnsavedChanges(false);
+  };
+
+  // 복원 확인 다이얼로그 처리
+  const handleRestoreConfirm = () => {
+    loadDraft();
+    setShowRestoreDialog(false);
+  };
+
+  const handleRestoreCancel = () => {
+    clearDraft();
+    setShowRestoreDialog(false);
+  };
+
+  // 페이지 로드 시 임시저장 데이터 확인
+  useEffect(() => {
+    const savedDraft = localStorage.getItem(DRAFT_KEY);
+    if (savedDraft) {
+      try {
+        const draftData = JSON.parse(savedDraft);
+        // 저장된 데이터가 있고, 내용이 비어있지 않으면 복원 확인
+        if (draftData.title || draftData.content || draftData.category) {
+          setShowRestoreDialog(true);
+        }
+      } catch (error) {
+        localStorage.removeItem(DRAFT_KEY);
+      }
+    }
+  }, []);
+
+  // 자동 저장 (debounced)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (title || content || category) {
+        saveDraft();
+      }
+    }, 2000); // 2초 지연 후 자동 저장
+
+    return () => clearTimeout(timer);
+  }, [title, content, category, imageUrl]);
+
+  // 변경 감지
+  useEffect(() => {
+    setHasUnsavedChanges(true);
+  }, [title, content, category]);
 
   // 개발 환경이 아니면 홈으로 리다이렉트
   if (!isDevelopment) {
@@ -133,6 +232,8 @@ export default function WritePage() {
       const data = await response.json();
 
       if (data.success) {
+        // 발행 성공 시 임시저장 데이터 삭제
+        clearDraft();
         alert("포스트가 성공적으로 발행되었습니다!");
         router.push("/");
       } else {
@@ -149,6 +250,35 @@ export default function WritePage() {
   return (
     <div className='min-h-screen bg-gray-50'>
       <div className='max-w-5xl mx-auto py-8 px-4'>
+        {/* 복원 확인 다이얼로그 */}
+        {showRestoreDialog && (
+          <div className='fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50'>
+            <div className='bg-white rounded-lg p-6 max-w-md mx-4'>
+              <div className='flex items-center gap-3 mb-4'>
+                <AlertCircle className='h-6 w-6 text-amber-500' />
+                <h3 className='text-lg font-semibold'>
+                  임시저장된 글이 있습니다
+                </h3>
+              </div>
+              <p className='text-gray-600 mb-6'>
+                이전에 작성하던 글이 임시저장되어 있습니다. 계속
+                작성하시겠습니까?
+              </p>
+              <div className='flex gap-3 justify-end'>
+                <Button variant='outline' onClick={handleRestoreCancel}>
+                  새로 작성
+                </Button>
+                <Button
+                  onClick={handleRestoreConfirm}
+                  className='bg-purple-600 hover:bg-purple-700'
+                >
+                  이어서 작성
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* 헤더 */}
         <div className='flex items-center justify-between mb-8'>
           <Link href='/'>
@@ -158,24 +288,40 @@ export default function WritePage() {
             </Button>
           </Link>
 
-          <div className='flex gap-2'>
-            <Button
-              variant='outline'
-              size='sm'
-              onClick={() => setIsPreview(!isPreview)}
-            >
-              <Eye className='mr-2 h-4 w-4' />
-              {isPreview ? "편집" : "미리보기"}
-            </Button>
-            <Button
-              size='sm'
-              onClick={handleSubmit}
-              disabled={!title || !content || !category || isSubmitting}
-              className='bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700'
-            >
-              <Save className='mr-2 h-4 w-4' />
-              {isSubmitting ? "발행 중..." : "발행"}
-            </Button>
+          <div className='flex items-center gap-4'>
+            {/* 자동저장 상태 표시 */}
+            <div className='text-sm text-gray-500 flex items-center gap-2'>
+              <Clock className='h-4 w-4' />
+              {lastSaved ? (
+                <span>
+                  {hasUnsavedChanges
+                    ? "저장 중..."
+                    : `${lastSaved.toLocaleTimeString()} 저장됨`}
+                </span>
+              ) : (
+                <span>저장되지 않음</span>
+              )}
+            </div>
+
+            <div className='flex gap-2'>
+              <Button
+                variant='outline'
+                size='sm'
+                onClick={() => setIsPreview(!isPreview)}
+              >
+                <Eye className='mr-2 h-4 w-4' />
+                {isPreview ? "편집" : "미리보기"}
+              </Button>
+              <Button
+                size='sm'
+                onClick={handleSubmit}
+                disabled={!title || !content || !category || isSubmitting}
+                className='bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700'
+              >
+                <Save className='mr-2 h-4 w-4' />
+                {isSubmitting ? "발행 중..." : "발행"}
+              </Button>
+            </div>
           </div>
         </div>
 
