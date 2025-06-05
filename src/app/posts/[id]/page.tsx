@@ -51,63 +51,72 @@ export default function PostDetailPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    if (params.id) {
-      fetchPost();
-      fetchComments();
-      incrementViews();
-    }
-  }, [params.id]);
+    const initializePage = async () => {
+      if (!params.id) return;
 
-  const fetchPost = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("posts")
-        .select("*")
-        .eq("id", params.id)
-        .single();
-
-      if (error) throw error;
-      setPost(data);
-    } catch (error) {
-      console.error("Error fetching post:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchComments = async () => {
-    try {
-      const { data, error } = await supabase
-        .from("comments")
-        .select("*")
-        .eq("post_id", params.id)
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-      setComments(data || []);
-    } catch (error) {
-      console.error("Error fetching comments:", error);
-    }
-  };
-
-  const incrementViews = async () => {
-    try {
-      // RPC 함수를 사용하거나 직접 업데이트
-      const { error } = await supabase.rpc("increment_views", {
-        post_id: params.id,
-      });
-
-      if (error) {
-        // RPC 함수가 없으면 직접 업데이트
-        await supabase
+      try {
+        // 1. 포스트 데이터 가져오기
+        const { data: postData, error: postError } = await supabase
           .from("posts")
-          .update({ views: (post?.views || 0) + 1 })
-          .eq("id", params.id);
+          .select("*")
+          .eq("id", params.id)
+          .single();
+
+        if (postError) throw postError;
+
+        setPost(postData);
+
+        // 2. 조회수 증가 (포스트 데이터가 있을 때만)
+        if (postData) {
+          try {
+            // RPC 함수 시도
+            const { error: rpcError } = await supabase.rpc("increment_views", {
+              post_id: params.id,
+            });
+
+            if (rpcError) {
+              // RPC 실패 시 직접 업데이트
+              const { data: updatedPost } = await supabase
+                .from("posts")
+                .update({ views: (postData.views || 0) + 1 })
+                .eq("id", params.id)
+                .select()
+                .single();
+
+              if (updatedPost) {
+                setPost(updatedPost);
+              }
+            } else {
+              // RPC 성공 시 업데이트된 조회수 반영
+              setPost((prev) =>
+                prev ? { ...prev, views: (prev.views || 0) + 1 } : null
+              );
+            }
+          } catch (viewError) {
+            // 조회수 증가 실패는 무시하고 계속 진행
+            console.warn("Failed to increment views:", viewError);
+          }
+        }
+
+        // 3. 댓글 가져오기
+        const { data: commentsData, error: commentsError } = await supabase
+          .from("comments")
+          .select("*")
+          .eq("post_id", params.id)
+          .order("created_at", { ascending: false });
+
+        if (!commentsError) {
+          setComments(commentsData || []);
+        }
+      } catch (error) {
+        console.error("Error initializing page:", error);
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error("Error incrementing views:", error);
-    }
-  };
+    };
+
+    initializePage();
+  }, [params.id]);
 
   const handleCommentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
